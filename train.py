@@ -20,6 +20,13 @@ from datasets import load_dataset
 from model import UNet2DModel
 import numpy as np
 import re
+import numpy as np
+import matplotlib.pyplot as plt
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import torch.nn.functional as F
+from torch.utils.data import DataLoader, Dataset
 
 class NpyDataset(Dataset):
     def __init__(self, folder_path, max_length, random_crop=True):
@@ -52,8 +59,6 @@ class NpyDataset(Dataset):
 
     def __getitem__(self, idx):
       return self.preprocessed_data[idx]
-
-
 
 class Sampler(torch.utils.data.Sampler):
     def __init__(self, dataset_length, seed=31129347):
@@ -154,7 +159,6 @@ def replace_grad_nans(model):
 
 
 def train_loop(config, model, noise_scheduler, optimizer, train_dataloader, lr_scheduler):
-
     ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
     kwargs_handlers = [ddp_kwargs]
     if config.get('loss_scaling', None) is not None:
@@ -234,17 +238,10 @@ def train_loop(config, model, noise_scheduler, optimizer, train_dataloader, lr_s
     else:
         loss_scaling = 1.0
     assert loss_type in ['mlp', 'scaled'], 'loss type not supported'
+
     for step in range(start_step, total_steps):
-        batch = next(train_iter)
-        images = batch["images"]
-        if isinstance(images, list) or isinstance(images, tuple):
-            # means the augmentation pipeline is turned on and we should handle it
-            images, og_images, augmentation_labels = images
-        else:
-            augmentation_labels = None
-        label = None
-        if "label" in batch:
-            label = batch["label"]
+
+        images= next(train_iter)
 
         noise = torch.randn_like(images)
         # Add noise to the clean images according to the noise magnitude at each timestep
@@ -254,9 +251,9 @@ def train_loop(config, model, noise_scheduler, optimizer, train_dataloader, lr_s
 
         with accelerator.accumulate(model):
             # Predict the noise
-            pred, u_sigma = model(noisy_images, sigma[:, 0, 0, 0], class_labels=label, augmentation_labels=augmentation_labels, return_dict=False, return_loss_mlp=True)
+            pred, u_sigma = model(noisy_images, sigma[:, 0, 0, 0], class_labels = None,augmentation_labels= None, return_dict=False, return_loss_mlp=True)
 
-            loss = F.mse_loss(pred[0], images, reduction="none")
+            loss = F.mse_loss(pred[0], images,reduction="none")
             loss = loss.mean(dim=(1,2,3))
             scaled_loss = loss_w[:, 0, 0, 0] * loss
             u_sigma = u_sigma[:, 0]
@@ -303,31 +300,26 @@ def train_loop(config, model, noise_scheduler, optimizer, train_dataloader, lr_s
                 "lr": f'{logs["lr"]:.6f}',
                 "step": step+1
             }
-            progress_bar.set_postfix(**p_logs)
-            accelerator.log(logs, step=step+1)
 
         if accelerator.is_main_process:
-            save_image = (step + 1) % (config.save_image_steps*config.gradient_accumulation_steps) == 0 or step == total_steps - 1
             save_model = (step + 1) % (config.save_model_steps*config.gradient_accumulation_steps) == 0 or step == total_steps - 1
-            if save_image or save_model:
+            if save_model:
                 if is_distributed:
                     pipeline = KarrasPipeline(unet=accelerator.unwrap_model(model.module), scheduler=noise_scheduler)
+                    pipeline.save_pretrained("/content/improved_edm/results/cifar10/")
                 else:
                     pipeline = KarrasPipeline(unet=accelerator.unwrap_model(model), scheduler=noise_scheduler)
-                if save_image:
-                    if config.use_ema:
-                        ema.store(model.parameters())
-                        ema.copy_to(model.parameters(), rel_idx=0)
-
-                    evaluate(config, step+1, pipeline)
-                    if config.use_ema:
-                        ema.restore(model.parameters())
-
+                    pipeline.save_pretrained("/content/improved_edm/results/cifar10/")
                 if save_model:
                     accelerator.save_state(os.path.join(config.output_dir, f"accelerator_{step+1}"))
                     if config.use_ema:
                         ema_save_dir = os.path.join(config.output_dir, f"ema_checkpoints")
                         ema.save_pretrained(ema_save_dir)
+
+            progress_bar.set_postfix(**p_logs)
+            accelerator.log(logs, step=step+1)
+            train_iter = iter(train_dataloader)
+
 
     accelerator.end_training()
 
@@ -337,7 +329,7 @@ def train(config: DictConfig) -> None:
     assert config.output_dir is not None, "You need to specify an output directory"
 
     # Dataloader
-    train_dataloader = DataLoader(NpyDataset("/content/2", 192, True), batch_size=config.train_batch_size,shuffle=False, num_workers=4, pin_memory=True)
+    train_dataloader = DataLoader(NpyDataset("/content/2", 192, True), batch_size=config.train_batch_size,shuffle=True, num_workers=4, pin_memory=True)
 
     # Model
     # _convert_ partial to save listconfigs as lists in unet so that it can be saved
