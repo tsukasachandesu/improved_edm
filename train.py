@@ -21,6 +21,39 @@ from model import UNet2DModel
 import numpy as np
 import re
 
+class NpyDataset(Dataset):
+    def __init__(self, folder_path, max_length, random_crop=True):
+        self.folder_path = folder_path
+        self.max_length = max_length
+        self.random_crop = random_crop
+        self.file_list = [f for f in os.listdir(folder_path) if f.endswith('.npy')]
+        self.preprocessed_data = []
+        for file in self.file_list:
+          file_path = os.path.join(folder_path, file)
+          data = np.load(file_path, mmap_mode='r')
+          self.preprocessed_data.append(self._preprocess(data))
+
+    def __len__(self):
+        return len(self.file_list)
+
+    def _preprocess(self, data):
+      if data.shape[0] > self.max_length:
+        if self.random_crop:
+          start = np.random.randint(0, data.shape[0] - self.max_length)
+          data = data[start:start+self.max_length, :]
+        else:
+          data = data[:self.max_length, :]
+      elif data.shape[0] < self.max_length:
+        pad_width = ((0, self.max_length - data.shape[0]), (0, 0))
+        data = np.pad(data, pad_width, mode='constant')
+      data = torch.from_numpy(data).float()
+      data = data.unsqueeze(0)
+      return data
+
+    def __getitem__(self, idx):
+      return self.preprocessed_data[idx]
+
+
 
 class Sampler(torch.utils.data.Sampler):
     def __init__(self, dataset_length, seed=31129347):
@@ -304,28 +337,7 @@ def train(config: DictConfig) -> None:
     assert config.output_dir is not None, "You need to specify an output directory"
 
     # Dataloader
-    train_dataset = load_dataset(config.data.dataset.path, split=config.data.dataset.split)
-    if 'map' in config.data.dataset:
-        assert 'obj' in config.data.dataset.map, 'map object not specified'
-        assert 'from_key' in config.data.dataset.map, 'map from_key not specified'
-        assert 'to_key' in config.data.dataset.map, 'map to_key not specified'
-        map_transform = hydra.utils.instantiate(config.data.dataset.map.obj)
-        map_func = map_wrapper(map_transform, config.data.dataset.map.from_key, config.data.dataset.map.to_key)
-        train_dataset = train_dataset.map(map_func)
-    if hasattr(config, 'augmentation') and config.augmentation is not None:
-        transforms = [hydra.utils.instantiate(config.augmentation)]
-    else:
-        transforms = [RandomHorizontalFlip(), ToTensor(), Normalize(mean=[0.5]*3, std=[0.5]*3)]
-    transforms = Compose(transforms)
-
-    def transform(examples):
-        images = [transforms(image.convert("RGB")) for image in examples["image"]]
-        if 'label' in examples:
-            return {"images": images, "label": examples["label"]}
-        return {"images": images}
-
-    train_dataset.set_transform(transform)
-    train_dataloader = DataLoader(train_dataset, batch_size=config.train_batch_size, sampler=Sampler(len(train_dataset)), num_workers=config.data.dataloader.num_workers, pin_memory=True)
+    train_dataloader = DataLoader(NpyDataset("/content/2", 192, True), batch_size=config.train_batch_size,shuffle=False, num_workers=4, pin_memory=True)
 
     # Model
     # _convert_ partial to save listconfigs as lists in unet so that it can be saved
