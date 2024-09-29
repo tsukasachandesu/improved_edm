@@ -1,8 +1,8 @@
 model_name: "improved_edm"
-image_size: 32
+image_size: 128
 use_ema: True
-train_batch_size: 512
-val_batch_size: 64
+train_batch_size: 2
+val_batch_size: 2
 num_train_kimg: 200_000
 gradient_accumulation_steps: 1
 learning_rate: 0.01
@@ -15,7 +15,7 @@ loss_type: 'mlp' # 'mlp' or 'scaled'
 loss_scaling: null
 augmentation: 
   _target_: "augmentation.KarrasAugmentationPipeline"
-  disable_all: False # set to true to turn off
+  disable_all: True # set to true to turn off
 training:
   P_mean: -1.2
   P_std: 1.2
@@ -23,16 +23,16 @@ training:
 unet:
   _target_: "model.UNet2DModel"
   sample_size: ${image_size}
-  in_channels: 3
-  out_channels: 3
+  in_channels: 1
+  out_channels: 1
   layers_per_block: 3
   block_out_channels: [256, 256, 256]
   down_block_types: ["DownBlock2D", "AttnDownBlock2D", "AttnDownBlock2D"]
   up_block_types: ["AttnUpBlock2D", "AttnUpBlock2D", "UpBlock2D"]
   dropout: 0.10
   add_attention: True
-  num_class_embeds: 10
-  num_augmentation_labels: 9
+  num_class_embeds: 1
+  num_augmentation_labels: 1
 noise_scheduler:
   _target_: "diffusers.DDIMScheduler"
   num_train_timesteps: 1000
