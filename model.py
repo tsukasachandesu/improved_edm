@@ -1115,17 +1115,10 @@ class UNet2DModel(ModelMixin, ConfigMixin):
         self.loss_mlp = nn.Sequential(GaussianFourierProjection(embedding_size=block_out_channels[0], scale=0.25), Linear(timestep_input_dim, 1, bias=False))
 
         # class embedding
-        if num_class_embeds is not None:
-            self.class_embedding = ClassEmbedding(num_classes=num_class_embeds, embedding_size=time_embed_dim)
-            self.num_class_embeds = num_class_embeds
-        else:
-            self.class_embedding = None
+        self.class_embedding = None
         
         # augmentation labels
-        if num_augmentation_labels is not None:
-            self.augment_label_embedding = TimestepEmbedding(num_augmentation_labels, timestep_input_dim)
-        else:
-            self.augment_label_embedding = None
+        self.augment_label_embedding = None
 
         self.down_blocks = nn.ModuleList([])
         self.mid_block = None
